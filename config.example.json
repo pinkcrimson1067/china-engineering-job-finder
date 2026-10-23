@@ -7,11 +7,12 @@
     {"name": "高层次人才网·科研机构", "url": "https://www.gccrcw.com/rss/7.xml"},
     {"name": "高层次人才网·企业招聘", "url": "https://www.gccrcw.com/rss/5.xml"}
   ],
-  "include_any": ["机械", "流体", "流动", "实验", "试验", "工程热物理", "动力工程", "CFD", "PIV", "mechanical", "fluid", "thermal"],
+  "include_any": ["机械", "流体", "流动", "实验", "试验", "发动机", "声学", "振动", "测量", "信号处理", "科学计算", "工程热物理", "动力工程", "CFD", "PIV", "mechanical", "fluid", "acoustic", "vibration", "measurement", "signal processing", "scientific computing", "thermal"],
   "exclude_any": [],
   "country": "",
   "worldwide_only": false,
   "max_pages_per_query": 1,
   "max_results": 50
 }
+
 
