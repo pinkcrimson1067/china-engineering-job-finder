@@ -19,6 +19,62 @@ from pathlib import Path
 API_URL = "https://himalayas.app/jobs/api/search"
 USER_AGENT = "personal-job-finder/0.1 (personal job discovery)"
 
+# A title match is stronger than a passing mention in an RSS excerpt.
+MATCH_GROUPS = {
+    "流体/CFD/PIV": ("direct", ("流体", "流动", "空气动力", "气动", "cfd", "piv", "fluid", "aerodynamic")),
+    "发动机/动力": ("direct", ("发动机", "燃烧", "推进", "涡轮", "engine", "propulsion", "combustion")),
+    "实验研发": ("direct", ("实验研发", "试验研发", "实验工程", "试验工程", "实验研究", "试验研究", "experimental research")),
+    "声学": ("adjacent", ("声学", "噪声", "acoustic", "noise control")),
+    "振动": ("adjacent", ("振动", "模态分析", "vibration", "modal analysis")),
+    "实验测量": ("adjacent", ("实验测量", "试验测量", "测试测量", "数据采集", "传感器", "measurement", "data acquisition", "instrumentation")),
+    "信号处理": ("adjacent", ("信号处理", "频谱分析", "时频分析", "signal processing", "spectral analysis")),
+    "科学计算": ("adjacent", ("科学计算", "数值模拟", "数值计算", "仿真", "scientific computing", "numerical simulation")),
+    "机械通用": ("low", ("机械", "mechanical", "工程热物理", "动力工程", "thermal")),
+}
+SKILL_TERMS = {
+    "CFD": ("cfd", "计算流体力学"),
+    "PIV": ("piv", "粒子图像测速"),
+    "信号处理": ("信号处理", "signal processing"),
+    "数据采集": ("数据采集", "data acquisition"),
+    "模态分析": ("模态分析", "modal analysis"),
+    "有限元": ("有限元", "fea", "finite element"),
+    "Python": ("python",),
+    "MATLAB": ("matlab",),
+}
+
+
+def has_term(text: str, term: str) -> bool:
+    """Match Chinese substrings and whole English phrases, not e.g. 'piv' in 'pivot'."""
+    term = term.casefold()
+    if term.isascii():
+        return bool(re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text))
+    return term in text
+
+
+def score_job(job: dict, known_skills: list[str] | None) -> None:
+    title, summary = job["title"].casefold(), job["summary"].casefold()
+    hits, score, direct_title, direct_summary, adjacent = [], 0, False, False, False
+    for name, (level, terms) in MATCH_GROUPS.items():
+        in_title = any(has_term(title, term) for term in terms)
+        in_summary = any(has_term(summary, term) for term in terms)
+        if not (in_title or in_summary):
+            continue
+        hits.append(name)
+        score += {"direct": 40, "adjacent": 20, "low": 5}[level] if in_title else {"direct": 8, "adjacent": 4, "low": 1}[level]
+        direct_title |= level == "direct" and in_title
+        direct_summary |= level == "direct" and in_summary
+        adjacent |= level == "adjacent"
+    job["match_groups"] = "、".join(hits) or "未命中预设组"
+    job["match_score"] = min(score, 100)
+    job["match_level"] = "直接匹配" if direct_title else "相邻可迁移" if direct_summary or adjacent else "低相关"
+    if known_skills is None:
+        job["missing_skills"] = "未评估（未配置 known_skills）"
+    else:
+        declared = " ".join(known_skills).casefold()
+        mentioned = [name for name, terms in SKILL_TERMS.items() if any(has_term(title, t) or has_term(summary, t) for t in terms)]
+        missing = [name for name in mentioned if not any(has_term(declared, t) for t in (name, *SKILL_TERMS[name]))]
+        job["missing_skills"] = "、".join(missing) if missing else "未发现明确技能差距"
+
 
 def read_config(path: Path) -> dict:
     config = json.loads(path.read_text(encoding="utf-8"))
@@ -29,6 +85,11 @@ def read_config(path: Path) -> dict:
         if not isinstance(value, list) or any(not isinstance(x, str) for x in value):
             raise ValueError(f"{key} 必须是字符串列表")
         config[key] = [x.strip() for x in value if x.strip()]
+    if "known_skills" in config:
+        skills = config["known_skills"]
+        if not isinstance(skills, list) or any(not isinstance(x, str) for x in skills):
+            raise ValueError("known_skills 必须是字符串列表")
+        config["known_skills"] = [x.strip() for x in skills if x.strip()]
     feeds = config.get("rss_feeds", [])
     if not isinstance(feeds, list) or any(not isinstance(x, dict) or not isinstance(x.get("url"), str) or not x["url"].startswith("https://") for x in feeds):
         raise ValueError("rss_feeds 必须是含 HTTPS url 的对象列表")
@@ -140,10 +201,10 @@ def select_jobs(raw: list[dict], config: dict) -> list[dict]:
             if "China" not in city and "中国" not in city:
                 continue
             job["location"] = city
+        score_job(job, config.get("known_skills"))
         results.append(job)
-        if len(results) >= config["max_results"]:
-            break
-    return results
+    rank = {"直接匹配": 2, "相邻可迁移": 1, "低相关": 0}
+    return sorted(results, key=lambda job: (rank[job["match_level"]], job["match_score"]), reverse=True)[:config["max_results"]]
 
 
 def write_reports(jobs: list[dict], output: Path, only_new: bool) -> tuple[int, int]:
@@ -158,12 +219,12 @@ def write_reports(jobs: list[dict], output: Path, only_new: bool) -> tuple[int, 
     lines = ["# 职位搜索结果", "", f"运行时间：{now}；匹配：{len(jobs)}；本次新发现：{new_count}。", "", "来源见各条记录。点击原始链接确认岗位、工作地点和截止时间。", ""]
     for job in shown:
         title = job["title"].replace("[", "\\[").replace("]", "\\]")
-        lines.extend([f"## [{title}](<{job['url']}>)" + (f" — {job['company']}" if job['company'] else ""), "", f"- 状态：{job['status']}；来源：{job['source']}；发布日期：{job['published'] or '未知'}", f"- 地点/限制：{job['location']}；类型：{job['type'] or '未注明'}", f"- 摘要：{job['summary'] or 'RSS 未提供，请打开原文'}", ""])
+        lines.extend([f"## [{title}](<{job['url']}>)" + (f" — {job['company']}" if job['company'] else ""), "", f"- 状态：{job['status']}；来源：{job['source']}；发布日期：{job['published'] or '未知'}", f"- 匹配：{job['match_level']}；分数：{job['match_score']}/100；命中组：{job['match_groups']}", f"- 技能差距提示：{job['missing_skills']}", f"- 地点/限制：{job['location']}；类型：{job['type'] or '未注明'}", f"- 摘要：{job['summary'] or 'RSS 未提供，请打开原文'}", ""])
     if not shown:
         lines.append("本次没有符合条件的新职位。" if only_new else "本次没有符合条件的职位。")
     (output / "latest.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     with (output / "latest.csv").open("w", encoding="utf-8-sig", newline="") as handle:
-        columns = ["status", "title", "company", "location", "type", "published", "summary", "url", "source"]
+        columns = ["status", "title", "company", "location", "type", "published", "summary", "url", "source", "match_level", "match_groups", "match_score", "missing_skills"]
         writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(shown)
@@ -189,4 +250,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
