@@ -13,11 +13,15 @@ Copy-Item config.example.json config.json
 python job_finder.py --config config.json
 ```
 
-先编辑 `config.json`：`rss_feeds` 是要订阅的公开 RSS 地址；`include_any` 是标题/公司/摘要必须命中的词，留空则不过滤；`exclude_any` 是排除词。默认关键词对应机械、流体和实验研发，全国不设城市过滤。高层次人才网的 RSS 没有结构化地点字段，仍须阅读原公告。
+先编辑 `config.json`：`rss_feeds` 是要订阅的公开 RSS 地址；`include_any` 是标题/公司/摘要必须命中的词，留空则不过滤；`exclude_any` 是排除词。旧配置无需修改，原有纳入/排除逻辑保持不变。示例关键词覆盖机械、流体、发动机、实验研发、声学、振动、测量、信号处理和科学计算，全国不设城市过滤。高层次人才网的 RSS 没有结构化地点字段，仍须阅读原公告。
+
+通过原有筛选后，程序按标题和摘要中的关键词组打分，先按层级、再按分数排序。标题命中流体/CFD/PIV、发动机/动力或实验研发为「直接匹配」；仅摘要命中这些方向，或命中声学、振动、实验测量、信号处理、科学计算，为「相邻可迁移」；其余为「低相关」。标题权重大于摘要，同组只计一次，分数上限 100。分层仅供浏览排序，不代表职位实际要求或录用概率。`max_results` 在排序后截取，因此强匹配不会被低相关职位先占满名额。
+
+可选的 `known_skills` 是你自己声明的已掌握技能列表，例如在 `config.json` 添加 `"known_skills": ["PIV", "Python"]`，具体内容须按真实技能填写。只有职位标题/摘要明确提到而此列表未覆盖的预设技能，才会列入「技能差距提示」；不配置时显示「未评估」。这是关键词提醒，必须打开原文核实技能要求。
 
 如果要查海外远程职位，可另在 `queries` 填入英文词；这会调用 [Himalayas 公开 API](https://himalayas.app/docs/remote-jobs-api)。`country` 和 `worldwide_only` 只作用于该 API。
 
-每次执行会覆写 `output/latest.md` 和 `output/latest.csv`，并更新 `output/seen.json`。报告会标记 `NEW` 和 `SEEN`。可用 `--only-new` 只在报告中保留新发现的职位。若请求失败，程序会报错，不会把已有结果冒充本次结果。
+每次执行会覆写 `output/latest.md` 和 `output/latest.csv`，并更新 `output/seen.json`。报告会标记 `NEW` 和 `SEEN`，同时给出匹配层级、命中组、分数和技能差距提示。可用 `--only-new` 只在报告中保留新发现的职位。若请求失败，程序会报错，不会把已有结果冒充本次结果。
 
 ```powershell
 python job_finder.py --config config.json --only-new
@@ -43,4 +47,5 @@ python job_finder.py --config config.json --only-new
 本工具是一个新项目原型。公开发布、持续维护、用户采用情况，都要以后真实发生并留下记录；创建仓库本身不构成 OpenAI 开源维护者计划的入选资格。
 
 代码以 [MIT 许可证](LICENSE) 开放。欢迎提交问题和改进；请勿在公开问题中上传简历或其他个人信息。
+
 
